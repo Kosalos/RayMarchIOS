@@ -1,103 +1,58 @@
 import UIKit
 import Metal
-import MetalKit
+
+let scrnSz:[CGPoint] = [ CGPoint(x:768,y:1024), CGPoint(x:834,y:1112), CGPoint(x:1024,y:1366) ] // portrait
+let scrnIndex = 0
+let scrnLandscape:Bool = false
 
 class ViewController: UIViewController {
     var control = Control()
     var cBuffer:MTLBuffer! = nil
     
-    let cameraMin:Float = -5
-    let cameraMax:Float = 5
-    let focusMin:Float = -10
-    let focusMax:Float = 10
-    let zoomMin:Float = -1
-    let zoomMax:Float = 5
-    let powerMin:Float = 2
-    let powerMax:Float = 12
-
-    var cameraDelta = float3()
-    var focusDelta = float3()
-    var zoomDelta = Float()
-    var powerDelta = Float()
-
-    var reDelta:Float = 0
-    var imDelta:Float = 0
-    var multDelta:Float = 0
-    var isScrolling:Bool = false
     var timer = Timer()
     var outTexture: MTLTexture!
     let bytesPerPixel: Int = 4
     var pipeline1: MTLComputePipelineState!
-    var pipeline2: MTLComputePipelineState!
     let queue = DispatchQueue(label: "Queue")
     lazy var device: MTLDevice! = MTLCreateSystemDefaultDevice()
-    lazy var defaultLibrary: MTLLibrary! = { self.device.makeDefaultLibrary() }()
     lazy var commandQueue: MTLCommandQueue! = { return self.device.makeCommandQueue() }()
     
     let SIZE:Int = 800
 
     let threadGroupCount = MTLSizeMake(20,20, 1)   // integer factor of image size (800,800)
     lazy var threadGroups: MTLSize = { MTLSizeMake(SIZE / threadGroupCount.width, SIZE / threadGroupCount.height, 1) }()
-    
+
+    @IBOutlet var dCameraXY: DeltaView!
+    @IBOutlet var sCameraZ: SliderView!
+    @IBOutlet var dFocusXY: DeltaView!
+    @IBOutlet var sFocusZ: SliderView!
+    @IBOutlet var sZoom: SliderView!
+    @IBOutlet var sPower: SliderView!
+    @IBOutlet var sDist: SliderView!
     @IBOutlet var imageView: UIImageView!
-    @IBOutlet var labelcx: UILabel!
-    @IBOutlet var labelcy: UILabel!
-    @IBOutlet var labelcz: UILabel!
-    @IBOutlet var labelfx: UILabel!
-    @IBOutlet var labelfy: UILabel!
-    @IBOutlet var labelfz: UILabel!
-    @IBOutlet var labelz:  UILabel!
-    @IBOutlet var labelp:  UILabel!
-
-    @IBOutlet var slidercx: UISlider!
-    @IBOutlet var slidercy: UISlider!
-    @IBOutlet var slidercz: UISlider!
-    @IBOutlet var sliderfx: UISlider!
-    @IBOutlet var sliderfy: UISlider!
-    @IBOutlet var sliderfz: UISlider!
-    @IBOutlet var sliderz: UISlider!
-    @IBOutlet var sliderp: UISlider!
-
-    let qcdx:Float  = 0.05  
-    let zdx:Float  = 0.001
-    let pdx:Float  = 0.01
-
-    @IBAction func cxMinus(_ sender: UIButton)  { clearDeltas(); cameraDelta.x = -qcdx * control.zoom;  isScrolling = true  }
-    @IBAction func cxPlus(_ sender: UIButton)   { clearDeltas(); cameraDelta.x = +qcdx * control.zoom;  isScrolling = true  }
-    @IBAction func cyMinus(_ sender: UIButton)  { clearDeltas(); cameraDelta.y = -qcdx * control.zoom;  isScrolling = true  }
-    @IBAction func cyPlus(_ sender: UIButton)   { clearDeltas(); cameraDelta.y = +qcdx * control.zoom;  isScrolling = true  }
-    @IBAction func czMinus(_ sender: UIButton)  { clearDeltas(); cameraDelta.z = -qcdx * control.zoom;  isScrolling = true  }
-    @IBAction func czPlus(_ sender: UIButton)   { clearDeltas(); cameraDelta.z = +qcdx * control.zoom;  isScrolling = true  }
-    @IBAction func fxMinus(_ sender: UIButton)  { clearDeltas(); focusDelta.x = -qcdx * control.zoom;  isScrolling = true  }
-    @IBAction func fxPlus(_ sender: UIButton)   { clearDeltas(); focusDelta.x = +qcdx * control.zoom;  isScrolling = true  }
-    @IBAction func fyMinus(_ sender: UIButton)  { clearDeltas(); focusDelta.y = -qcdx * control.zoom;  isScrolling = true  }
-    @IBAction func fyPlus(_ sender: UIButton)   { clearDeltas(); focusDelta.y = +qcdx * control.zoom;  isScrolling = true  }
-    @IBAction func fzMinus(_ sender: UIButton)  { clearDeltas(); focusDelta.z = -qcdx * control.zoom;  isScrolling = true  }
-    @IBAction func fzPlus(_ sender: UIButton)   { clearDeltas(); focusDelta.z = +qcdx * control.zoom;  isScrolling = true  }
-    @IBAction func zMinus(_ sender: UIButton)   { clearDeltas(); zoomDelta = -zdx;  isScrolling = true  }
-    @IBAction func zPlus(_ sender: UIButton)    { clearDeltas(); zoomDelta = +zdx;  isScrolling = true  }
-    @IBAction func pMinus(_ sender: UIButton)   { clearDeltas(); powerDelta = -pdx;  isScrolling = true  }
-    @IBAction func pPlus(_ sender: UIButton)    { clearDeltas(); powerDelta = +pdx;  isScrolling = true  }
-
-    
-    @IBAction func scrollRelease(_ sender: UIButton) { isScrolling = false}
+    @IBOutlet var resetButton: UIButton!
     @IBAction func resetButtonPressed(_ sender: UIButton) { reset() }
+
+    var cameraX:Float = 0.0
+    var cameraY:Float = 0.0
+    var cameraZ:Float = 0.0
+    var focusX:Float = 0.0
+    var focusY:Float = 0.0
+    var focusZ:Float = 0.0
+    var dist1000:Float = 0.0
+
+    var sList:[SliderView]! = nil
+    var dList:[DeltaView]! = nil
 
     override var prefersStatusBarHidden: Bool { return true }
     
-    func clearDeltas() {
-        cameraDelta = float3()
-        focusDelta = float3()
-        zoomDelta = 0
-        powerDelta = 0
-    }
-
     //MARK: -
 
     override func viewDidLoad() {
         super.viewDidLoad()
         
         do {
+            let defaultLibrary:MTLLibrary! = self.device.makeDefaultLibrary()
             guard let kf1 = defaultLibrary.makeFunction(name: "rayMarchShader")  else { fatalError() }
             pipeline1 = try device.makeComputePipelineState(function: kf1)
         }
@@ -109,14 +64,101 @@ class ViewController: UIViewController {
             height: SIZE,
             mipmapped: false)
         outTexture = self.device.makeTexture(descriptor: textureDescriptor)!
+        
+        cBuffer = device.makeBuffer(bytes: &control, length: MemoryLayout<Control>.stride, options: MTLResourceOptions.storageModeShared)
+        
+        NotificationCenter.default.addObserver(self, selector: #selector(self.rotated), name: NSNotification.Name.UIDeviceOrientationDidChange, object: nil)
     }
     
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        
+        sList = [ sCameraZ,sFocusZ,sZoom,sPower,sDist ]
+        dList = [ dCameraXY,dFocusXY ]
+
+        let cameraMin:Float = -5
+        let cameraMax:Float = 5
+        let focusMin:Float = -10
+        let focusMax:Float = 10
+        let zoomMin:Float = 0.001
+        let zoomMax:Float = 0.7
+        let powerMin:Float = 1.5
+        let powerMax:Float = 20
+        let distMin:Float = 0.00001 * 1000
+        let distMax:Float = 0.03 * 1000
+
+        dCameraXY.initializeFloat1(&cameraX, cameraMin, cameraMax, 1, "Cam XY")
+        dCameraXY.initializeFloat2(&cameraY)
+        sCameraZ.initializeFloat(&cameraZ, .delta, cameraMin, cameraMax, 1, "Cam Z")
+        dFocusXY.initializeFloat1(&focusX, focusMin,focusMax, 1, "Foc XY")
+        dFocusXY.initializeFloat2(&focusY)
+        sFocusZ.initializeFloat(&focusZ, .delta, focusMin, focusMax, 1, "Foc Z")
+        sZoom.initializeFloat(&control.zoom, .delta, zoomMin, zoomMax, 2, "Zoom")
+        sPower.initializeFloat(&control.power, .delta, powerMin, powerMax, 1, "Power")
+        sDist.initializeFloat(&dist1000, .direct, distMin, distMax, 1, "Dist1000")
+
         reset()
         timer = Timer.scheduledTimer(timeInterval: 1.0/30.0, target:self, selector: #selector(timerHandler), userInfo: nil, repeats:true)
     }
     
+    //MARK: -
+    
+    var oldXS:CGFloat = 0
+    
+    @objc func rotated() {
+        let xs:CGFloat = view.bounds.width
+        let ys:CGFloat = view.bounds.height
+//        let xs = scrnLandscape ? scrnSz[scrnIndex].y : scrnSz[scrnIndex].x
+//        let ys = scrnLandscape ? scrnSz[scrnIndex].x : scrnSz[scrnIndex].y
+
+        if xs == oldXS { return }
+        oldXS = xs
+        
+        let bys:CGFloat = 35    // slider height
+        let gap:CGFloat = 10
+
+        if ys > xs {    // portrait
+            let left:CGFloat = xs / 6
+            let sz = xs - 10
+            imageView.frame = CGRect(x:5, y:5, width:sz, height:sz)
+            
+            let by:CGFloat = sz + 30  // top of widgets
+            var x:CGFloat = left
+            
+            let cxs:CGFloat = xs / 5
+            dCameraXY.frame = CGRect(x:x, y:by, width:cxs, height:cxs)
+            sCameraZ.frame  = CGRect(x:x, y:by+cxs+5, width:cxs, height:bys)
+            x += cxs + gap
+            dFocusXY.frame = CGRect(x:x, y:by, width:cxs, height:cxs)
+            sFocusZ.frame  = CGRect(x:x, y:by+cxs+5, width:cxs, height:bys)
+            
+            x += cxs + 20 // zoom,power,dist,reset
+            var y = by
+            sZoom.frame = CGRect(x:x, y:y, width:cxs, height:bys); y += bys + gap
+            sPower.frame = CGRect(x:x, y:y, width:cxs, height:bys); y += bys + gap
+            sDist.frame = CGRect(x:x, y:y, width:cxs, height:bys); y += bys + gap
+            resetButton.frame = CGRect(x:x, y:y, width:80, height:bys)
+        }
+        else {          // landscape
+            let sz = ys - 10
+            let x:CGFloat = sz + 30
+            var y:CGFloat = 50
+
+            imageView.frame = CGRect(x:5, y:5, width:sz, height:sz)
+            
+            let cxs:CGFloat = 150 * xs / 1024
+            dCameraXY.frame = CGRect(x:x, y:y, width:cxs, height:cxs); y += cxs+5
+            sCameraZ.frame  = CGRect(x:x, y:y, width:cxs, height:bys); y += bys + 30
+            dFocusXY.frame = CGRect(x:x, y:y, width:cxs, height:cxs); y += cxs+5
+            sFocusZ.frame  = CGRect(x:x, y:y, width:cxs, height:bys); y += bys + 30
+            sZoom.frame = CGRect(x:x, y:y, width:cxs, height:bys); y += bys + gap
+            sPower.frame = CGRect(x:x, y:y, width:cxs, height:bys); y += bys + gap
+            sDist.frame = CGRect(x:x, y:y, width:cxs, height:bys); y += bys + gap
+            resetButton.frame = CGRect(x:x, y:y, width:80, height:bys)
+        }
+    }
+    
+
     func reset() {
         control.camera = vector_float3(1.59,3.89,0.75)
         control.focus = vector_float3(-0.52,-1.22,-0.31)
@@ -127,36 +169,27 @@ class ViewController: UIViewController {
         control.iterations = 100
         control.maxRaySteps = 70
         control.power = 8
-        control.minimumStepDistance = 0.0005
+        control.minimumStepDistance = 0.003
         
-        updateLabels()
-        updateSliders()
-    }
-    
-    func fClamp(_ v:Float, _ min:Float, _ max:Float) -> Float {
-        if v < min { return min }
-        if v > max { return max }
-        return v
+        cameraX = control.camera.x
+        cameraY = control.camera.y
+        cameraZ = control.camera.z
+        focusX = control.focus.x
+        focusY = control.focus.y
+        focusZ = control.focus.z
+        dist1000 = control.minimumStepDistance * 1000.0
+
+        for s in sList { s.setNeedsDisplay() }
+        for d in dList { d.setNeedsDisplay() }
     }
     
     //MARK: -
-    
     var angle:Float = 0
 
     @objc func timerHandler() {
-        if isScrolling {
-            control.camera.x = fClamp(control.camera.x + cameraDelta.x, cameraMin, cameraMax)
-            control.camera.y = fClamp(control.camera.y + cameraDelta.y, cameraMin, cameraMax)
-            control.camera.z = fClamp(control.camera.z + cameraDelta.z, cameraMin, cameraMax)
-            control.focus.x = fClamp(control.focus.x + focusDelta.x, focusMin, focusMax)
-            control.focus.y = fClamp(control.focus.y + focusDelta.y, focusMin, focusMax)
-            control.focus.z = fClamp(control.focus.z + focusDelta.z, focusMin, focusMax)
-            control.zoom    = fClamp(control.zoom + zoomDelta, zoomMin, zoomMax)
-            control.power   = fClamp(control.power + powerDelta, powerMin, powerMax)
-
-            updateSliders()
-            updateLabels()
-        }
+        
+        for s in sList { _ = s.update() }
+        for d in dList { _ = d.update() }
 
         // update light position
         control.light.x = sinf(angle) * 5
@@ -166,44 +199,6 @@ class ViewController: UIViewController {
         updateImage()
     }
     
-    @IBAction func sliderPressed(_ sender: UISlider) {
-        switch sender {
-        case slidercx : control.camera.x = cameraMin + (cameraMax - cameraMin) * sender.value
-        case slidercy : control.camera.y = cameraMin + (cameraMax - cameraMin) * sender.value
-        case slidercz : control.camera.z = cameraMin + (cameraMax - cameraMin) * sender.value
-        case sliderfx : control.focus.x = focusMin + (focusMax - focusMin) * sender.value
-        case sliderfy : control.focus.y = focusMin + (focusMax - focusMin) * sender.value
-        case sliderfz : control.focus.z = focusMin + (focusMax - focusMin) * sender.value
-        case sliderz  : control.zoom = zoomMin + (zoomMax - zoomMin) * sender.value
-        case sliderp  : control.power = powerMin + (powerMax - powerMin) * sender.value
-        default : break
-        }
-
-        updateLabels()
-    }
-    
-    func updateLabels() {
-        labelcx.text = String(format:"%+6.4f",control.camera.x)
-        labelcy.text = String(format:"%+6.4f",control.camera.y)
-        labelcz.text = String(format:"%+6.4f",control.camera.z)
-        labelfx.text = String(format:"%+6.4f",control.focus.x)
-        labelfy.text = String(format:"%+6.4f",control.focus.y)
-        labelfz.text = String(format:"%+6.4f",control.focus.z)
-        labelz.text  = String(format:"%+6.4f",control.zoom)
-        labelp.text  = String(format:"%+6.4f",control.power)
-    }
-    
-    func updateSliders() {
-        slidercx.value = (control.camera.x - cameraMin) / (cameraMax - cameraMin)
-        slidercy.value = (control.camera.y - cameraMin) / (cameraMax - cameraMin)
-        slidercz.value = (control.camera.z - cameraMin) / (cameraMax - cameraMin)
-        sliderfx.value = (control.focus.x - focusMin) / (focusMax - focusMin)
-        sliderfy.value = (control.focus.y - focusMin) / (focusMax - focusMin)
-        sliderfz.value = (control.focus.z - focusMin) / (focusMax - focusMin)
-        sliderz.value = (control.zoom - zoomMin) / (zoomMax - zoomMin)
-        sliderp.value = (control.power - powerMin) / (powerMax - powerMin)
-    }
-
     func updateImage() {
         queue.async {
             self.calcRayMarch()
@@ -214,12 +209,15 @@ class ViewController: UIViewController {
     //MARK: -
 
     func calcRayMarch() {
-        if cBuffer == nil {
-            cBuffer = device.makeBuffer(bytes: &control, length: MemoryLayout<Control>.stride, options: MTLResourceOptions.storageModeShared)
-        }
-        else {
-            cBuffer.contents().copyBytes(from: &control, count:MemoryLayout<Control>.stride)
-        }
+        control.camera.x = cameraX
+        control.camera.y = cameraY
+        control.camera.z = cameraZ
+        control.focus.x = focusX
+        control.focus.y = focusY
+        control.focus.z = focusZ
+        control.minimumStepDistance = dist1000 / 1000.0
+        
+        cBuffer.contents().copyBytes(from: &control, count:MemoryLayout<Control>.stride)
         
         let commandBuffer = commandQueue.makeCommandBuffer()!
         let commandEncoder = commandBuffer.makeComputeCommandEncoder()!
