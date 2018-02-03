@@ -16,7 +16,8 @@ class ViewController: UIViewController {
     let queue = DispatchQueue(label: "Queue")
     lazy var device: MTLDevice! = MTLCreateSystemDefaultDevice()
     lazy var commandQueue: MTLCommandQueue! = { return self.device.makeCommandQueue() }()
-    
+    var circleMove:Bool = false
+
     let SIZE:Int = 800
 
     let threadGroupCount = MTLSizeMake(20,20, 1)   // integer factor of image size (800,800)
@@ -31,8 +32,12 @@ class ViewController: UIViewController {
     @IBOutlet var sDist: SliderView!
     @IBOutlet var imageView: UIImageView!
     @IBOutlet var resetButton: UIButton!
-    @IBAction func resetButtonPressed(_ sender: UIButton) { reset() }
+    @IBOutlet var formulaSeg: UISegmentedControl!
+    @IBOutlet var circleButton: UIButton!
 
+    @IBAction func resetButtonPressed(_ sender: UIButton) { reset() }
+    @IBAction func formulaChanged(_ sender: UISegmentedControl) {  control.formula = Int32(sender.selectedSegmentIndex) }
+    
     var cameraX:Float = 0.0
     var cameraY:Float = 0.0
     var cameraZ:Float = 0.0
@@ -68,6 +73,7 @@ class ViewController: UIViewController {
         cBuffer = device.makeBuffer(bytes: &control, length: MemoryLayout<Control>.stride, options: MTLResourceOptions.storageModeShared)
         
         NotificationCenter.default.addObserver(self, selector: #selector(self.rotated), name: NSNotification.Name.UIDeviceOrientationDidChange, object: nil)
+        rotated()
     }
     
     override func viewDidAppear(_ animated: Bool) {
@@ -81,7 +87,7 @@ class ViewController: UIViewController {
         let focusMin:Float = -10
         let focusMax:Float = 10
         let zoomMin:Float = 0.001
-        let zoomMax:Float = 0.7
+        let zoomMax:Float = 1
         let powerMin:Float = 1.5
         let powerMax:Float = 20
         let distMin:Float = 0.00001 * 1000
@@ -132,11 +138,13 @@ class ViewController: UIViewController {
             dFocusXY.frame = CGRect(x:x, y:by, width:cxs, height:cxs)
             sFocusZ.frame  = CGRect(x:x, y:by+cxs+5, width:cxs, height:bys)
             
-            x += cxs + 20 // zoom,power,dist,reset
+            x += cxs + 20
             var y = by
             sZoom.frame = CGRect(x:x, y:y, width:cxs, height:bys); y += bys + gap
             sPower.frame = CGRect(x:x, y:y, width:cxs, height:bys); y += bys + gap
             sDist.frame = CGRect(x:x, y:y, width:cxs, height:bys); y += bys + gap
+            formulaSeg.frame = CGRect(x:x, y:y, width:cxs, height:bys); y += bys + gap
+            circleButton.frame = CGRect(x:x, y:y, width:cxs, height:bys); y += bys + gap
             resetButton.frame = CGRect(x:x, y:y, width:80, height:bys)
         }
         else {          // landscape
@@ -154,39 +162,82 @@ class ViewController: UIViewController {
             sZoom.frame = CGRect(x:x, y:y, width:cxs, height:bys); y += bys + gap
             sPower.frame = CGRect(x:x, y:y, width:cxs, height:bys); y += bys + gap
             sDist.frame = CGRect(x:x, y:y, width:cxs, height:bys); y += bys + gap
+            formulaSeg.frame = CGRect(x:x, y:y, width:cxs, height:bys); y += bys + gap
+            circleButton.frame = CGRect(x:x, y:y, width:cxs, height:bys); y += bys + gap
             resetButton.frame = CGRect(x:x, y:y, width:80, height:bys)
         }
     }
     
-
     func reset() {
         control.camera = vector_float3(1.59,3.89,0.75)
         control.focus = vector_float3(-0.52,-1.22,-0.31)
         control.zoom = 0.6141
         control.size = Int32(SIZE)     // image size
-        control.colors = 5
         control.bailout = 2
         control.iterations = 100
         control.maxRaySteps = 70
         control.power = 8
         control.minimumStepDistance = 0.003
-        
-        cameraX = control.camera.x
-        cameraY = control.camera.y
-        cameraZ = control.camera.z
-        focusX = control.focus.x
-        focusY = control.focus.y
-        focusZ = control.focus.z
         dist1000 = control.minimumStepDistance * 1000.0
+
+        unWrapFloat3()
 
         for s in sList { s.setNeedsDisplay() }
         for d in dList { d.setNeedsDisplay() }
     }
     
     //MARK: -
+    
+    func unWrapFloat3() {
+        cameraX = control.camera.x
+        cameraY = control.camera.y
+        cameraZ = control.camera.z
+        focusX = control.focus.x
+        focusY = control.focus.y
+        focusZ = control.focus.z
+    }
+    
+    func wrapFloat3() {
+        control.camera.x = cameraX
+        control.camera.y = cameraY
+        control.camera.z = cameraZ
+        control.focus.x = focusX
+        control.focus.y = focusY
+        control.focus.z = focusZ
+        control.minimumStepDistance = dist1000 / 1000.0
+    }
+    
+    //MARK: -
+
+    let bColors:[UIColor] = [ UIColor(red:0.5, green:0.5, blue:0.5, alpha:1),  UIColor(red:1, green:0, blue:0.0, alpha:1) ]
+    func updateCircleButton() { circleButton.setTitleColor(bColors[Int(circleMove ? 1 : 0)], for:[]) }
+
+    var circleDistance = Float()
+    var circleAngle = Float()
+    
+    @IBAction func circleButtonPressed(_ sender: UIButton) {
+        circleMove = !circleMove
+        updateCircleButton()
+        
+        if circleMove {
+            circleDistance = sqrtf(control.camera.x * control.camera.x + control.camera.z * control.camera.z)
+            circleAngle = Float.pi + atan2f(control.focus.z - control.camera.z, control.focus.x - control.camera.x)
+            unWrapFloat3()
+        }
+    }
+    
+    //MARK: -
     var angle:Float = 0
 
     @objc func timerHandler() {
+        
+        if circleMove {
+            control.camera.x = cosf(circleAngle) * circleDistance
+            control.camera.z = sinf(circleAngle) * circleDistance
+            unWrapFloat3()
+            circleAngle += 0.01
+            dCameraXY.setNeedsDisplay()
+        }
         
         for s in sList { _ = s.update() }
         for d in dList { _ = d.update() }
@@ -209,12 +260,7 @@ class ViewController: UIViewController {
     //MARK: -
 
     func calcRayMarch() {
-        control.camera.x = cameraX
-        control.camera.y = cameraY
-        control.camera.z = cameraZ
-        control.focus.x = focusX
-        control.focus.y = focusY
-        control.focus.z = focusZ
+        wrapFloat3()
         control.minimumStepDistance = dist1000 / 1000.0
         
         cBuffer.contents().copyBytes(from: &control, count:MemoryLayout<Control>.stride)

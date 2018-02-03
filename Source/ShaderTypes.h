@@ -15,10 +15,10 @@ struct Control {
     vector_float3 focus;
     vector_float3 light;
     int size;
-    int colors;
     int bailout;
     int iterations;
     int maxRaySteps;
+    int formula;
     float power;
     float minimumStepDistance;
     float zoom;

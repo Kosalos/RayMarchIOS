@@ -32,7 +32,6 @@ float escape(float3 position, Control control) {
     int i;
     
     for(i=0;i<129;i++) {
-        if (i >= control.colors) return 1.0;
         r = length(z);
         if(r > control.bailout) break;
         trap += r;
@@ -51,7 +50,153 @@ float escape(float3 position, Control control) {
 
 // ===========================================================================================
 
-float DE(float3 position, Control control) {
+float DE(float3 w, Control control) {
+    int iter = 0;
+    float trap = 0.0;
+    float r = 0.0;
+    float dr = 1.0;
+
+    // 0 Bulb 1 --------------------------------------------------------------------------------
+    if (control.formula == 0) { // https://github.com/jtauber/mandelbulb/blob/master/mandel8.py
+        float theta,phi,pwr,ss;
+        
+        for(;;) {
+            if(++iter == control.iterations) break;
+
+            r = length(w);
+            if(r > control.bailout) break;
+            trap += r;
+            
+            theta = atan2(sqrt(w.x * w.x + w.y * w.y), w.z);
+            phi = atan2(w.y,w.x);
+            pwr = pow(r,control.power);
+            ss = sin(theta * control.power);
+            
+            w.x += pwr * ss * cos(phi * control.power);
+            w.y += pwr * ss * sin(phi * control.power);
+            w.z += pwr * cos(theta * control.power);
+        
+            dr = ( pow(r, control.power - 1.0) * control.power * dr ) + 1.0;
+        }
+    }
+    
+    // 1 Bulb 2 -----------------------------------------------------------------------------------
+    if (control.formula == 1) {
+        float dz = 1.0;
+        
+        for(;;) {
+            if(++iter == control.iterations) break;
+
+            r = length(w);
+            if(r > control.bailout) break;
+            trap += r;
+            
+            float m2 = r * r;
+            float m4 = m2 * m2;
+            dz = 8.0 * sqrt(m4 * m2 * r) * dz + 1.0;
+            
+            float x = w.x; float x2 = x*x; float x4 = x2*x2;
+            float y = w.y; float y2 = y*y; float y4 = y2*y2;
+            float z = w.z; float z2 = z*z; float z4 = z2*z2;
+            float k3 = x2 + z2;
+            float k2s = sqrt(pow(k3,control.power));
+            float k2 = 1;  if(k2s != 0) k2 = 1.0 / k2s;
+            float k1 = x4 + y4 + z4 - 6.0 * y2 * z2 - 6.0 * x2 * y2 + 2.0 * z2 * x2;
+            float k4 = x2 - y2 + z2;
+            
+            w.x +=  64.0 * x * y * z * (x2-z2) * k4 * (x4 - 6.0 * x2 * z2 + z4) * k1 * k2;
+            w.y +=  -16.0 * y2 * k3 * k4 * k4 + k1 * k1;
+            w.z +=  -8.0 * y * k4 * (x4 * x4 - 28.0 * x4 * x2 * z2 + 70.0 * x4 * z4 - 28.0 * x2 * z2 * z4 + z4 * z4) * k1 * k2;
+        
+            dr = ( pow(r, control.power - 1.0) * control.power * dr ) + 1.0;
+        }
+    }
+    
+    // 2 Bulb 3 -----------------------------------------------------------------------
+    if (control.formula == 2) {
+        float magnitude, theta_power, r_power, phi, phi_cos, xxyy;
+        
+        for(;;) {
+            if(++iter == control.iterations) break;
+
+            xxyy = w.x * w.x + w.y * w.y;
+            magnitude = xxyy + w.z * w.z;
+            
+            r = sqrt(magnitude);
+            if(r > control.bailout) break;
+            trap += r;
+            
+            theta_power = atan2(w.y,w.x) * control.power;
+            r_power = pow(r,control.power);
+            
+            phi = asin(w.z / r);
+            phi_cos = cos(phi * control.power);
+            w.x += r_power * cos(theta_power) * phi_cos;
+            w.y += r_power * sin(theta_power) * phi_cos;
+            w.z += r_power * sin(phi * control.power);
+
+            dr = ( pow(r, control.power - 1.0) * control.power * dr ) + 1.0;
+        }
+    }
+    
+    // 3 Bulb 4 -----------------------------------------------------------------------
+    if (control.formula == 3) {
+        float magnitude, theta_power, r_power, phi, phi_sin, xxyy;
+        
+        for(;;) {
+            if(++iter == control.iterations) break;
+            
+            xxyy = w.x * w.x + w.y * w.y;
+            magnitude = xxyy + w.z * w.z;
+            
+            r = sqrt(magnitude);
+            if(r > control.bailout) break;
+            trap += r;
+            
+            theta_power = atan2(w.y,w.x) * control.power;
+            r_power = pow(r,control.power);
+            
+            phi = atan2(sqrt(xxyy), w.z);
+            phi_sin = sin(phi * control.power);
+            w.x += r_power * cos(theta_power) * phi_sin;
+            w.y += r_power * sin(theta_power) * phi_sin;
+            w.z += r_power * cos(phi * control.power);
+            
+            dr = ( pow(r, control.power - 1.0) * control.power * dr ) + 1.0;
+        }
+    }
+    
+    // 4 Bulb 5 -----------------------------------------------------------------------
+    if (control.formula == 4) {
+        float magnitude, theta_power, r_power, phi, phi_cos, xxyy;
+        
+        for(;;) {
+            if(++iter == control.iterations) break;
+            
+            xxyy = w.x * w.x + w.y * w.y;
+            magnitude = xxyy + w.z * w.z;
+            
+            r = sqrt(magnitude);
+            if(r > control.bailout) break;
+            trap += r;
+            
+            theta_power = atan2(w.y,w.x) * control.power;
+            r_power = pow(r,control.power);
+            
+            phi = acos(w.z / r);
+            phi_cos = cos(phi * control.power);
+            w.x += r_power * cos(theta_power) * phi_cos;
+            w.y += r_power * sin(theta_power) * phi_cos;
+            w.z += r_power * sin(phi*control.power);
+            
+            dr = ( pow(r, control.power - 1.0) * control.power * dr ) + 1.0;
+        }
+    }
+    
+    return 0.5 * log(r)*r/dr;
+}
+
+float oldDE(float3 position, Control control) {
     float3 z = position;
     float dr = 1.0;
     float r = 0.0;
